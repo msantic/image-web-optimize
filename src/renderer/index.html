@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Optimizer</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+  <div class="titlebar">
+    <span class="titlebar-title">Optimizer</span>
+  </div>
+
+  <main>
+
+    <div id="drop-zone" class="drop-zone">
+      <div class="drop-icon">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+      </div>
+      <p class="drop-label">Drop files here</p>
+      <p class="drop-sub">Images (JPG, PNG → WebP) &nbsp;·&nbsp; Videos (MP4, MOV, MKV → MP4)</p>
+    </div>
+
+    <div class="options-bar">
+      <label class="option-label">
+        <span>Image max width</span>
+        <select id="max-width">
+          <option value="2400">2400px</option>
+          <option value="1600" selected>1600px</option>
+          <option value="1200">1200px</option>
+          <option value="800">800px</option>
+        </select>
+      </label>
+      <div class="option-divider"></div>
+      <label class="option-label">
+        <span>Video preset</span>
+        <select id="video-preset">
+          <option value="same">Original size</option>
+          <option value="1080p">1080p</option>
+          <option value="720p" selected>720p</option>
+          <option value="480p">480p</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="queue" class="queue" hidden>
+      <div class="queue-header">
+        <span id="queue-summary"></span>
+        <button id="clear-btn">Clear</button>
+      </div>
+      <ul id="file-list"></ul>
+    </div>
+
+  </main>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
