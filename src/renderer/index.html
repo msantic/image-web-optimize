@@ -9,55 +9,163 @@
 <body>
 
   <div class="titlebar">
-    <span class="titlebar-title">Optimizer</span>
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="optimize">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Optimize
+      </button>
+      <button class="tab-btn" data-tab="record">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></svg>
+        Record
+      </button>
+    </div>
   </div>
 
   <main>
 
-    <div id="drop-zone" class="drop-zone">
-      <div class="drop-icon">
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="17 8 12 3 7 8"/>
-          <line x1="12" y1="3" x2="12" y2="15"/>
-        </svg>
+    <!-- ─── Optimize Panel ──────────────────────────────────────────────── -->
+    <div id="panel-optimize">
+
+      <div id="drop-zone" class="drop-zone">
+        <div class="drop-icon">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <p class="drop-label">Drop files to optimize</p>
+        <p class="drop-sub">JPG &amp; PNG → WebP &nbsp;·&nbsp; MP4, MOV, MKV → compressed MP4</p>
       </div>
-      <p class="drop-label">Drop files here</p>
-      <p class="drop-sub">Images (JPG, PNG → WebP) &nbsp;·&nbsp; Videos (MP4, MOV, MKV → MP4)</p>
+
+      <div class="options-bar">
+        <label class="option-label">
+          <span>Max width</span>
+          <select id="max-width">
+            <option value="2400">2400px</option>
+            <option value="1600" selected>1600px</option>
+            <option value="1200">1200px</option>
+            <option value="800">800px</option>
+          </select>
+        </label>
+        <div class="option-divider"></div>
+        <label class="option-label">
+          <span>Video</span>
+          <select id="video-preset">
+            <option value="same">Original</option>
+            <option value="1080p">1080p</option>
+            <option value="720p" selected>720p</option>
+            <option value="480p">480p</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="queue" class="queue" hidden>
+        <div class="queue-header">
+          <span id="queue-summary"></span>
+          <button id="clear-btn">Clear</button>
+        </div>
+        <ul id="file-list"></ul>
+      </div>
+
     </div>
 
-    <div class="options-bar">
-      <label class="option-label">
-        <span>Image max width</span>
-        <select id="max-width">
-          <option value="2400">2400px</option>
-          <option value="1600" selected>1600px</option>
-          <option value="1200">1200px</option>
-          <option value="800">800px</option>
-        </select>
-      </label>
-      <div class="option-divider"></div>
-      <label class="option-label">
-        <span>Video preset</span>
-        <select id="video-preset">
-          <option value="same">Original size</option>
-          <option value="1080p">1080p</option>
-          <option value="720p" selected>720p</option>
-          <option value="480p">480p</option>
-        </select>
-      </label>
-    </div>
+    <!-- ─── Record Panel ────────────────────────────────────────────────── -->
+    <div id="panel-record" hidden>
 
-    <div id="queue" class="queue" hidden>
-      <div class="queue-header">
-        <span id="queue-summary"></span>
-        <button id="clear-btn">Clear</button>
+      <div id="perm-warning" class="perm-warning" hidden>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span id="perm-warning-text" class="flex-1"></span>
+        <button id="perm-settings-btn" class="perm-settings-btn">Open Settings</button>
       </div>
-      <ul id="file-list"></ul>
+
+      <!-- Window picker + resize -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">Window</span>
+          <button id="refresh-sources-btn" class="ghost-btn" title="Refresh">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+          </button>
+        </div>
+        <select id="window-select" class="full-select"></select>
+        <div class="section-row">
+          <select id="size-preset" class="flex-1">
+            <option value="1944x1100">1944 × 1100</option>
+            <option value="1920x1080">1920 × 1080</option>
+            <option value="1280x720">1280 × 720</option>
+            <option value="2560x1440">2560 × 1440</option>
+            <option value="custom">Custom…</option>
+          </select>
+          <div class="dim-inputs" id="dim-inputs">
+            <input id="dim-w" type="number" value="1944" min="400" max="7680" class="dim-input">
+            <span class="dim-sep">×</span>
+            <input id="dim-h" type="number" value="1100" min="300" max="4320" class="dim-input">
+          </div>
+          <button id="resize-btn" class="action-btn">Resize</button>
+        </div>
+      </div>
+
+      <!-- Audio -->
+      <div class="section">
+        <div class="section-title">Audio</div>
+        <div class="section-row">
+          <span class="row-label">Mic</span>
+          <select id="mic-select" class="flex-1"></select>
+        </div>
+        <div class="section-row">
+          <label class="toggle-label">
+            <input type="checkbox" id="system-audio-toggle" disabled>
+            <span id="system-audio-label">Include system audio</span>
+          </label>
+        </div>
+        <div class="section-row">
+          <label class="toggle-label">
+            <input type="checkbox" id="normalize-audio-toggle" checked>
+            <span>Normalize audio</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Save + Record — pinned footer -->
+      <div class="record-footer">
+        <div class="save-row">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:var(--muted)"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span id="save-dir" class="save-dir-text flex-1">~/Movies/Recordings</span>
+          <button id="choose-dir-btn" class="link-btn">Change…</button>
+        </div>
+
+        <div id="record-idle">
+          <button id="record-btn" class="record-btn">
+            <span class="record-dot"></span>
+            Start Recording
+          </button>
+        </div>
+
+        <div id="record-active" hidden>
+          <span id="record-timer" class="record-timer">00:00</span>
+          <span class="live-badge">● Live</span>
+          <button id="stop-btn" class="stop-btn">Stop</button>
+        </div>
+
+        <div id="record-result" hidden>
+          <span id="result-path" class="result-path"></span>
+          <button id="show-result-btn" class="action-btn">Show in Finder</button>
+        </div>
+      </div>
+
     </div>
 
   </main>
+
+  <!-- Countdown overlay -->
+  <div id="countdown-overlay" class="countdown-overlay" hidden>
+    <span id="countdown-number" class="countdown-number">3</span>
+  </div>
 
   <script type="module" src="./main.ts"></script>
 </body>

@@ -8,7 +8,7 @@
     "build": "env -u ELECTRON_RUN_AS_NODE electron-vite build && electron-builder --mac",
     "preview": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
     "cli": "node index.mjs",
-    "postinstall": "electron-rebuild -f -w sharp && ([ \"$(uname)\" = \"Darwin\" ] && codesign --force --deep --sign - node_modules/electron/dist/Electron.app || true)"
+    "postinstall": "electron-rebuild -f -w sharp && ([ \"$(uname)\" = \"Darwin\" ] && codesign --verify --deep node_modules/electron/dist/Electron.app 2>/dev/null || codesign --force --deep --sign - node_modules/electron/dist/Electron.app || true)"
   },
   "keywords": [],
   "author": "",
@@ -36,7 +36,11 @@
     "productName": "Optimizer",
     "mac": {
       "target": "dmg",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Used to record microphone audio.",
+        "NSScreenCaptureUsageDescription": "Used to record screen content."
+      }
     },
     "files": [
       "out/**/*",

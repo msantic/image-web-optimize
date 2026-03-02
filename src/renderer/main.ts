@@ -1,12 +1,22 @@
 // Renderer — vanilla TypeScript, no framework needed for a tool this simple.
 // Communicates with the main process via window.optimizer (exposed by preload).
 
+interface Permissions { screen: string; microphone: string }
+
 interface OptimizerAPI {
   optimizeFiles: (files: string[], options: { maxWidth: number; videoPreset: string }) => Promise<{ success: boolean }>
   openInFinder: (dirPath: string) => Promise<void>
   getPathForFile: (file: File) => string
   onFileProgress: (cb: (data: ProgressData) => void) => void
   removeProgressListener: () => void
+  // recorder
+  getRunningApps: () => Promise<string[]>
+  resizeWindow: (p: { app: string; width: number; height: number; x?: number; y?: number }) => Promise<void>
+  saveRecording: (p: { buffer: ArrayBuffer; outputDir: string; mimeType: string; normalizeAudio: boolean; hasAudio: boolean }) => Promise<string>
+  chooseDirectory: () => Promise<string | null>
+  getPermissions: () => Promise<Permissions>
+  openExternal: (url: string) => Promise<void>
+  setDockBadge: (text: string) => Promise<void>
 }
 
 interface ProgressData {
@@ -29,6 +39,32 @@ const clearBtn = document.getElementById('clear-btn')!
 
 interface QueueItem { el: HTMLLIElement; status: string }
 const items = new Map<string, QueueItem>()
+
+// ─── Tab Switching ────────────────────────────────────────────────────────────
+
+const panelOptimize = document.getElementById('panel-optimize')!
+const panelRecord   = document.getElementById('panel-record')!
+let recorderInited  = false
+
+document.querySelectorAll<HTMLButtonElement>('.tab-btn').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'))
+    btn.classList.add('active')
+
+    if (btn.dataset['tab'] === 'record') {
+      panelOptimize.hidden = true
+      panelRecord.hidden = false
+      if (!recorderInited) {
+        const { initRecorder } = await import('./recorder')
+        await initRecorder()
+        recorderInited = true
+      }
+    } else {
+      panelRecord.hidden = true
+      panelOptimize.hidden = false
+    }
+  })
+})
 
 // ─── Drag & Drop ─────────────────────────────────────────────────────────────
 

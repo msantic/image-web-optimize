@@ -14,6 +14,7 @@ export interface OptimizeOptions {
 }
 
 contextBridge.exposeInMainWorld('optimizer', {
+  // ─── Optimize ──────────────────────────────────────────────────────────────
   optimizeFiles: (files: string[], options: OptimizeOptions) =>
     ipcRenderer.invoke('optimize-files', { files, options }),
 
@@ -30,4 +31,21 @@ contextBridge.exposeInMainWorld('optimizer', {
   removeProgressListener: () => {
     ipcRenderer.removeAllListeners('file-progress')
   },
+
+  // ─── Recorder ──────────────────────────────────────────────────────────────
+  getRunningApps: () => ipcRenderer.invoke('get-running-apps'),
+
+  resizeWindow: (p: { app: string; width: number; height: number; x?: number; y?: number }) =>
+    ipcRenderer.invoke('resize-window', p),
+
+  saveRecording: (p: { buffer: ArrayBuffer; outputDir: string; mimeType: string; normalizeAudio: boolean; hasAudio: boolean }) =>
+    ipcRenderer.invoke('save-recording', p),
+
+  chooseDirectory: () => ipcRenderer.invoke('choose-directory'),
+
+  getPermissions: () => ipcRenderer.invoke('get-permissions'),
+
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
+
+  setDockBadge: (text: string) => ipcRenderer.invoke('set-dock-badge', text),
 })
