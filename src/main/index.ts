@@ -143,8 +143,23 @@ ipcMain.handle(
       : outputDir
     await fs.ensureDir(expandedDir)
 
+    // Convert whatever IPC delivers into a Node.js Buffer robustly.
+    // Electron may deliver the ArrayBuffer as a Buffer, Uint8Array, or raw ArrayBuffer
+    // depending on serialization path — handle all three.
+    let data: Buffer
+    if (Buffer.isBuffer(buffer)) {
+      data = buffer
+    } else if (buffer instanceof Uint8Array) {
+      data = Buffer.from(buffer)
+    } else {
+      data = Buffer.from(new Uint8Array(buffer as ArrayBuffer))
+    }
+
+    if (data.length === 0) {
+      throw new Error('Recording produced empty data. Try recording for a longer time.')
+    }
+
     const timestamp = Date.now()
-    const data = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer as ArrayBuffer)
     const isInputMp4 = mimeType.includes('mp4')
     const tempExt = isInputMp4 ? '.mp4' : '.webm'
     const tempPath = path.join(expandedDir, `recording-${timestamp}-tmp${tempExt}`)
@@ -165,21 +180,27 @@ ipcMain.handle(
         outputOptions.push('-af loudnorm=I=-16:TP=-1.5:LRA=11')
       }
     } else {
-      outputOptions.push('-an')  // no audio stream
+      outputOptions.push('-an')
     }
 
     outputOptions.push('-movflags +faststart')
 
-    await new Promise<void>((resolve, reject) => {
-      ffmpegModule(tempPath)
-        .outputOptions(outputOptions)
-        .output(mp4Path)
-        .on('end', resolve)
-        .on('error', reject)
-        .run()
-    })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ffmpegModule(tempPath)
+          .outputOptions(outputOptions)
+          .output(mp4Path)
+          .on('end', resolve)
+          .on('error', (_err: Error, _stdout: string, stderr: string) =>
+            reject(new Error(stderr || _err.message)),
+          )
+          .run()
+      })
+    } finally {
+      // Always remove temp file, whether ffmpeg succeeded or failed
+      await fs.remove(tempPath).catch(() => {})
+    }
 
-    await fs.remove(tempPath)
     return mp4Path
   },
 )

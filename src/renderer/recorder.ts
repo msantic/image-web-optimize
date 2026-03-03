@@ -28,6 +28,26 @@ let systemAudioDeviceId: string | null = null
 let saveDir = '~/Movies/Recordings'
 let recordedMimeType = 'video/webm'
 
+// All active recording resources tracked here so every exit path can clean them up.
+let activeVideoStream: MediaStream | null = null
+let activeAudioCtx: AudioContext | null = null
+let activeMicStream: MediaStream | null = null
+let activeSysStream: MediaStream | null = null
+let isRecording = false
+
+function cleanupRecordingResources(): void {
+  activeVideoStream?.getTracks().forEach((t) => t.stop())
+  activeMicStream?.getTracks().forEach((t) => t.stop())
+  activeSysStream?.getTracks().forEach((t) => t.stop())
+  activeAudioCtx?.close().catch(() => {})
+  activeVideoStream = null
+  activeMicStream = null
+  activeSysStream = null
+  activeAudioCtx = null
+  mediaRecorder = null
+  recordedChunks = []
+}
+
 // ─── Show / hide helpers ──────────────────────────────────────────────────────
 
 function show(id: string): void {
@@ -270,36 +290,36 @@ async function countdown(): Promise<void> {
 }
 
 async function startRecording(): Promise<void> {
-  const micSelect = el<HTMLSelectElement>('mic-select')
-  const micDeviceId = micSelect.value
+  if (isRecording) return  // guard against double-start
+  isRecording = true
+
+  const micDeviceId = el<HTMLSelectElement>('mic-select').value
   const systemAudioOn = el<HTMLInputElement>('system-audio-toggle').checked
 
   try {
-    const videoStream = await navigator.mediaDevices.getDisplayMedia({
+    activeVideoStream = await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: 30 },
       audio: false,
     })
 
-    // Merge audio sources
-    const audioCtx = new AudioContext()
-    const destination = audioCtx.createMediaStreamDestination()
-    let micStream: MediaStream | null = null
+    activeAudioCtx = new AudioContext()
+    const destination = activeAudioCtx.createMediaStreamDestination()
 
     if (micDeviceId) {
-      micStream = await navigator.mediaDevices.getUserMedia({
+      activeMicStream = await navigator.mediaDevices.getUserMedia({
         audio: { deviceId: { exact: micDeviceId } },
         video: false,
       })
-      audioCtx.createMediaStreamSource(micStream).connect(destination)
+      activeAudioCtx.createMediaStreamSource(activeMicStream).connect(destination)
     }
 
     if (systemAudioOn && systemAudioDeviceId) {
       try {
-        const sysStream = await navigator.mediaDevices.getUserMedia({
+        activeSysStream = await navigator.mediaDevices.getUserMedia({
           audio: { deviceId: { exact: systemAudioDeviceId } },
           video: false,
         })
-        audioCtx.createMediaStreamSource(sysStream).connect(destination)
+        activeAudioCtx.createMediaStreamSource(activeSysStream).connect(destination)
       } catch (e) {
         console.warn('System audio capture failed:', e)
       }
@@ -307,32 +327,30 @@ async function startRecording(): Promise<void> {
 
     const audioTracks = destination.stream.getAudioTracks()
     recordedHasAudio = audioTracks.length > 0
+
     const combined = new MediaStream([
-      ...videoStream.getVideoTracks(),
+      ...activeVideoStream.getVideoTracks(),
       ...audioTracks,
     ])
 
-    // Prefer MP4 — on macOS Electron, MediaRecorder supports H.264/AAC in MP4 natively,
-    // producing a valid file that needs no conversion. Fall back to WebM if unsupported.
-    const mimeType = (
-      ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4', 'video/webm'] as const
+    // VP9/VP8 WebM: bundled OpenH264 fails on Retina resolutions (>9.4MP).
+    // VP9/VP8 have no pixel limit; ffmpeg converts WebM→MP4 after recording.
+    recordedMimeType = (
+      ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'] as const
     ).find((t) => MediaRecorder.isTypeSupported(t)) ?? 'video/webm'
-    recordedMimeType = mimeType
 
     recordedChunks = []
-    mediaRecorder = new MediaRecorder(combined, { mimeType })
+    mediaRecorder = new MediaRecorder(combined, { mimeType: recordedMimeType })
     mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) recordedChunks.push(e.data)
     }
-    mediaRecorder.onstop = async () => {
-      await audioCtx.close()
-      combined.getTracks().forEach((t) => t.stop())
-      videoStream.getTracks().forEach((t) => t.stop())
-      micStream?.getTracks().forEach((t) => t.stop())
-      await finalizeRecording()
+    mediaRecorder.onstop = () => {
+      cleanupRecordingResources()
+      stopTimer()
+      void finalizeRecording()
     }
 
-    // Countdown fires AFTER streams are acquired — user switches to target app
+    // Countdown fires AFTER streams are acquired — user can switch to target app
     await countdown()
 
     mediaRecorder.start(1000)
@@ -342,36 +360,63 @@ async function startRecording(): Promise<void> {
     show('record-active')
     hide('record-result')
   } catch (err) {
-    console.error('startRecording failed:', err)
-    alert(`Recording failed: ${(err as Error).message}`)
+    cleanupRecordingResources()
+    isRecording = false
+    stopTimer()
+    hide('record-active')
+    show('record-idle')
+    // Ignore user-initiated cancellation (picker dismissed, mic denied interactively)
+    const name = (err as Error).name
+    if (name !== 'NotAllowedError' && name !== 'AbortError') {
+      console.error('startRecording failed:', err)
+      alert(`Recording failed: ${(err as Error).message}`)
+    }
   }
 }
 
 function stopRecording(): void {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop()
+  if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+    // Already stopped or never started — ensure UI is consistent
+    cleanupRecordingResources()
+    isRecording = false
+    stopTimer()
+    hide('record-active')
+    show('record-idle')
+    return
   }
-  stopTimer()
+  mediaRecorder.stop()  // triggers onstop → cleanupRecordingResources + finalizeRecording
   hide('record-active')
 }
 
 async function finalizeRecording(): Promise<void> {
-  const blob = new Blob(recordedChunks, { type: recordedMimeType })
-  const buffer = await blob.arrayBuffer()
+  const chunks = recordedChunks.slice()  // snapshot before cleanup clears the array
+  const mimeType = recordedMimeType
+  const hasAudio = recordedHasAudio
+  isRecording = false
+
+  if (chunks.length === 0) {
+    alert('No recording data was captured. Try recording for a longer time.')
+    show('record-idle')
+    return
+  }
 
   const stopBtn = el<HTMLButtonElement>('stop-btn')
   stopBtn.textContent = 'Saving…'
   stopBtn.disabled = true
 
   try {
+    const blob = new Blob(chunks, { type: mimeType })
+    const buffer = await blob.arrayBuffer()
     const normalizeAudio = el<HTMLInputElement>('normalize-audio-toggle').checked
+
     const mp4Path = await window.optimizer.saveRecording({
       buffer,
       outputDir: saveDir,
-      mimeType: recordedMimeType,
+      mimeType,
       normalizeAudio,
-      hasAudio: recordedHasAudio,
+      hasAudio,
     })
+
     el('result-path').textContent = mp4Path.split('/').pop() ?? mp4Path
     el<HTMLButtonElement>('show-result-btn').dataset['path'] = mp4Path
     show('record-result')
