@@ -12,7 +12,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // fluent-ffmpeg for WebM → MP4 conversion of recordings
 const require = createRequire(import.meta.url)
 const ffmpegModule = require('fluent-ffmpeg')
-const ffmpegPath = require('ffmpeg-static') as string
+
+// ffmpeg-static is in asarUnpack so the binary is extracted to app.asar.unpacked,
+// but require() still returns the app.asar path — correct it so the OS can execute it.
+const _rawFfmpegPath = require('ffmpeg-static') as string
+const ffmpegPath = _rawFfmpegPath.includes('app.asar')
+  ? _rawFfmpegPath.replace('app.asar', 'app.asar.unpacked')
+  : _rawFfmpegPath
 ffmpegModule.setFfmpegPath(ffmpegPath)
 
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG'])
@@ -135,8 +141,9 @@ ipcMain.handle(
 
 ipcMain.handle(
   'save-recording',
-  async (_e, { buffer, outputDir, mimeType, normalizeAudio, hasAudio }: {
-    buffer: ArrayBuffer; outputDir: string; mimeType: string; normalizeAudio: boolean; hasAudio: boolean
+  async (_e, { buffer, outputDir, mimeType, normalizeAudio, hasAudio, rawOutput }: {
+    buffer: ArrayBuffer; outputDir: string; mimeType: string
+    normalizeAudio: boolean; hasAudio: boolean; rawOutput: boolean
   }) => {
     const expandedDir = outputDir.startsWith('~')
       ? outputDir.replace('~', app.getPath('home'))
@@ -161,21 +168,49 @@ ipcMain.handle(
 
     const timestamp = Date.now()
     const isInputMp4 = mimeType.includes('mp4')
-    const tempExt = isInputMp4 ? '.mp4' : '.webm'
-    const tempPath = path.join(expandedDir, `recording-${timestamp}-tmp${tempExt}`)
-    const mp4Path  = path.join(expandedDir, `recording-${timestamp}.mp4`)
+    const nativeExt = isInputMp4 ? '.mp4' : '.webm'
+
+    const tempPath = path.join(expandedDir, `recording-${timestamp}-tmp${nativeExt}`)
 
     await fs.writeFile(tempPath, data)
 
-    // Always run ffmpeg: handles WebM→MP4 conversion + optional audio normalization.
-    // Video: copy stream if already H.264 (MP4 input), re-encode if WebM.
+    // Raw output: high-quality MP4 (CRF 12, preset slow) — visually near-lossless,
+    // opens natively everywhere, works in all editors, reasonable file size.
+    if (rawOutput) {
+      const rawPath = path.join(expandedDir, `recording-${timestamp}-raw.mp4`)
+      const rawOptions = ['-c:v libx264', '-crf 12', '-preset slow', '-movflags +faststart']
+      if (hasAudio) {
+        rawOptions.push('-c:a aac', '-b:a 320k')
+      } else {
+        rawOptions.push('-an')
+      }
+      try {
+        await new Promise<void>((resolve, reject) => {
+          ffmpegModule(tempPath)
+            .outputOptions(rawOptions)
+            .output(rawPath)
+            .on('end', resolve)
+            .on('error', (_err: Error, _stdout: string, stderr: string) =>
+              reject(new Error(stderr || _err.message)),
+            )
+            .run()
+        })
+      } finally {
+        await fs.remove(tempPath).catch(() => {})
+      }
+      return rawPath
+    }
+
+    const mp4Path  = path.join(expandedDir, `recording-${timestamp}.mp4`)
+
+    // Run ffmpeg: remux MP4 (copy) or convert WebM→MP4 (re-encode).
     // Audio: normalize with EBU R128 loudnorm if requested and audio exists.
     const outputOptions: string[] = isInputMp4
       ? ['-c:v copy']
-      : ['-c:v libx264', '-crf 23', '-preset fast']
+      : ['-c:v libx264', '-crf 18', '-preset medium']  // crf 18 = high quality
 
     if (hasAudio) {
-      outputOptions.push('-c:a aac', '-b:a 128k')
+      outputOptions.push('-c:a aac', '-b:a 192k')
       if (normalizeAudio) {
         outputOptions.push('-af loudnorm=I=-16:TP=-1.5:LRA=11')
       }

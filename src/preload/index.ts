@@ -38,7 +38,7 @@ contextBridge.exposeInMainWorld('optimizer', {
   resizeWindow: (p: { app: string; width: number; height: number; x?: number; y?: number }) =>
     ipcRenderer.invoke('resize-window', p),
 
-  saveRecording: (p: { buffer: ArrayBuffer; outputDir: string; mimeType: string; normalizeAudio: boolean; hasAudio: boolean }) =>
+  saveRecording: (p: { buffer: ArrayBuffer; outputDir: string; mimeType: string; normalizeAudio: boolean; hasAudio: boolean; rawOutput: boolean }) =>
     ipcRenderer.invoke('save-recording', p),
 
   chooseDirectory: () => ipcRenderer.invoke('choose-directory'),

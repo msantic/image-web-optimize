@@ -3,7 +3,7 @@
 interface RecorderBridge {
   getRunningApps: () => Promise<string[]>
   resizeWindow: (p: { app: string; width: number; height: number; x?: number; y?: number }) => Promise<void>
-  saveRecording: (p: { buffer: ArrayBuffer; outputDir: string; mimeType: string; normalizeAudio: boolean; hasAudio: boolean }) => Promise<string>
+  saveRecording: (p: { buffer: ArrayBuffer; outputDir: string; mimeType: string; normalizeAudio: boolean; hasAudio: boolean; rawOutput: boolean }) => Promise<string>
   chooseDirectory: () => Promise<string | null>
   getPermissions: () => Promise<{ screen: string; microphone: string }>
   openInFinder: (dirPath: string) => Promise<void>
@@ -34,6 +34,11 @@ let activeAudioCtx: AudioContext | null = null
 let activeMicStream: MediaStream | null = null
 let activeSysStream: MediaStream | null = null
 let isRecording = false
+
+// Diagnostics: track ondataavailable call count and total bytes received.
+// These survive cleanup so the error message can report them.
+let _diagDataEvents = 0
+let _diagDataBytes = 0
 
 function cleanupRecordingResources(): void {
   activeVideoStream?.getTracks().forEach((t) => t.stop())
@@ -302,7 +307,28 @@ async function startRecording(): Promise<void> {
       audio: false,
     })
 
+    // Validate the stream has a live video track.
+    // On macOS 15, the system picker can return a stream with no tracks if
+    // Screen Recording permission hasn't been granted for this specific app.
+    const videoTracks = activeVideoStream.getVideoTracks()
+    if (videoTracks.length === 0) {
+      throw new Error(
+        'Screen capture returned no video track. ' +
+        'Open System Settings → Privacy & Security → Screen Recording and enable this app.',
+      )
+    }
+    const videoTrack = videoTracks[0]
+    if (videoTrack.readyState === 'ended') {
+      throw new Error(
+        'Screen capture track ended immediately. The source window may have closed.',
+      )
+    }
+
+    // Create and immediately resume the AudioContext.
+    // Electron may start it in 'suspended' state; a suspended context produces
+    // silent/broken audio tracks that can disrupt the combined MediaStream.
     activeAudioCtx = new AudioContext()
+    await activeAudioCtx.resume()
     const destination = activeAudioCtx.createMediaStreamDestination()
 
     if (micDeviceId) {
@@ -325,33 +351,89 @@ async function startRecording(): Promise<void> {
       }
     }
 
-    const audioTracks = destination.stream.getAudioTracks()
+    // Only include audio tracks if a mic was selected or system audio is on.
+    // An idle AudioContext destination produces a silent audio track that some
+    // codec configurations handle poorly — skip it when no audio is needed.
+    const audioTracks = (micDeviceId || (systemAudioOn && systemAudioDeviceId))
+      ? destination.stream.getAudioTracks()
+      : []
     recordedHasAudio = audioTracks.length > 0
 
-    const combined = new MediaStream([
-      ...activeVideoStream.getVideoTracks(),
-      ...audioTracks,
-    ])
+    // Build combined stream: video only, or video + audio.
+    const combined = new MediaStream([videoTrack, ...audioTracks])
 
-    // VP9/VP8 WebM: bundled OpenH264 fails on Retina resolutions (>9.4MP).
-    // VP9/VP8 have no pixel limit; ffmpeg converts WebM→MP4 after recording.
+    // VP9/VP8 WebM: no pixel limit (OpenH264 for H.264 fails above ~9.4MP on Retina).
+    // Despite isTypeSupported('video/mp4;codecs=avc1') returning true on macOS,
+    // Electron's MediaRecorder uses OpenH264 (not VideoToolbox) and will throw
+    // EncodingError at Retina resolutions.  VP9 has no such constraint.
+    // ffmpeg converts WebM → H.264 MP4 after recording.
     recordedMimeType = (
       ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'] as const
     ).find((t) => MediaRecorder.isTypeSupported(t)) ?? 'video/webm'
 
     recordedChunks = []
-    mediaRecorder = new MediaRecorder(combined, { mimeType: recordedMimeType })
+    _diagDataEvents = 0
+    _diagDataBytes = 0
+
+    // Compute bitrate based on actual captured resolution.
+    // VP9 default (~2.5 Mbps) is completely inadequate for Retina/5K screens.
+    // Studio Display is 5120×2880; without an explicit bitrate it looks terrible.
+    const settings = videoTrack.getSettings()
+    const capturePixels = (settings.width ?? 1920) * (settings.height ?? 1080)
+    let videoBitsPerSecond: number
+    if (capturePixels <= 1280 * 720)        videoBitsPerSecond =  6_000_000  // 720p  → 6 Mbps
+    else if (capturePixels <= 1920 * 1080)  videoBitsPerSecond = 12_000_000  // 1080p → 12 Mbps
+    else if (capturePixels <= 2560 * 1440)  videoBitsPerSecond = 20_000_000  // 1440p → 20 Mbps
+    else if (capturePixels <= 3840 * 2160)  videoBitsPerSecond = 30_000_000  // 4K    → 30 Mbps
+    else                                    videoBitsPerSecond = 45_000_000  // 5K+   → 45 Mbps
+
+    console.log(
+      `[recorder] capture ${settings.width}×${settings.height} → VP9 @ ${videoBitsPerSecond / 1_000_000} Mbps`,
+    )
+
+    mediaRecorder = new MediaRecorder(combined, { mimeType: recordedMimeType, videoBitsPerSecond })
+
     mediaRecorder.ondataavailable = (e) => {
+      _diagDataEvents++
+      _diagDataBytes += e.data.size
       if (e.data.size > 0) recordedChunks.push(e.data)
     }
-    mediaRecorder.onstop = () => {
+
+    mediaRecorder.onerror = (event) => {
+      const err = (event as MediaRecorderErrorEvent).error
+      alert(`Recording encoder error: ${err.name}: ${err.message}`)
       cleanupRecordingResources()
+      isRecording = false
       stopTimer()
-      void finalizeRecording()
+      hide('record-active')
+      show('record-idle')
+    }
+
+    mediaRecorder.onstop = () => {
+      // Chromium/Electron on macOS can deliver ondataavailable events AFTER onstop
+      // fires in certain screen-capture configurations. We wait one event-loop turn
+      // so any already-queued (but not yet dispatched) data events can flush into
+      // recordedChunks before we snapshot and clean up.
+      const mime = recordedMimeType
+      const hasAudio = recordedHasAudio
+      setTimeout(() => {
+        const chunks = recordedChunks.slice()
+        cleanupRecordingResources()
+        stopTimer()
+        void finalizeRecording(chunks, mime, hasAudio)
+      }, 0)
     }
 
     // Countdown fires AFTER streams are acquired — user can switch to target app
     await countdown()
+
+    // Re-validate the track is still live after the countdown (user might have
+    // dismissed screen sharing from the macOS menu bar during those 4 seconds).
+    if (videoTrack.readyState === 'ended') {
+      throw new Error(
+        'Screen capture ended during countdown. Keep the source window open and try again.',
+      )
+    }
 
     mediaRecorder.start(1000)
     startTimer()
@@ -384,18 +466,18 @@ function stopRecording(): void {
     show('record-idle')
     return
   }
-  mediaRecorder.stop()  // triggers onstop → cleanupRecordingResources + finalizeRecording
+  mediaRecorder.stop()  // triggers onstop → (via setTimeout(0)) → finalizeRecording
   hide('record-active')
 }
 
-async function finalizeRecording(): Promise<void> {
-  const chunks = recordedChunks.slice()  // snapshot before cleanup clears the array
-  const mimeType = recordedMimeType
-  const hasAudio = recordedHasAudio
+async function finalizeRecording(chunks: Blob[], mimeType: string, hasAudio: boolean): Promise<void> {
   isRecording = false
 
   if (chunks.length === 0) {
-    alert('No recording data was captured. Try recording for a longer time.')
+    const detail = _diagDataEvents === 0
+      ? 'The encoder produced no data events at all.\n\nThis usually means Screen Recording permission is not granted for this app. Open System Settings → Privacy & Security → Screen Recording and enable it, then restart the app.'
+      : `The encoder fired ${_diagDataEvents} data event(s) totalling ${_diagDataBytes} bytes — all chunks were empty.\n\nThis is a codec issue. Try quitting and restarting the app.`
+    alert(`Recording produced no data.\n\n${detail}`)
     show('record-idle')
     return
   }
@@ -408,6 +490,7 @@ async function finalizeRecording(): Promise<void> {
     const blob = new Blob(chunks, { type: mimeType })
     const buffer = await blob.arrayBuffer()
     const normalizeAudio = el<HTMLInputElement>('normalize-audio-toggle').checked
+    const rawOutput = el<HTMLInputElement>('raw-output-toggle').checked
 
     const mp4Path = await window.optimizer.saveRecording({
       buffer,
@@ -415,6 +498,7 @@ async function finalizeRecording(): Promise<void> {
       mimeType,
       normalizeAudio,
       hasAudio,
+      rawOutput,
     })
 
     el('result-path').textContent = mp4Path.split('/').pop() ?? mp4Path

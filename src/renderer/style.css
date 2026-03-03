@@ -467,6 +467,7 @@ select:focus { border-color: var(--accent); }
 
 .toggle-label input[type="checkbox"] { -webkit-app-region: no-drag; }
 .toggle-label input[type="checkbox"]:disabled + span { opacity: 0.45; }
+.muted-note { color: var(--muted); font-size: 11px; }
 
 /* ─── Record footer ──────────────────────────────────────────────────────────── */
 

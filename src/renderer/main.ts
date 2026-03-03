@@ -12,7 +12,7 @@ interface OptimizerAPI {
   // recorder
   getRunningApps: () => Promise<string[]>
   resizeWindow: (p: { app: string; width: number; height: number; x?: number; y?: number }) => Promise<void>
-  saveRecording: (p: { buffer: ArrayBuffer; outputDir: string; mimeType: string; normalizeAudio: boolean; hasAudio: boolean }) => Promise<string>
+  saveRecording: (p: { buffer: ArrayBuffer; outputDir: string; mimeType: string; normalizeAudio: boolean; hasAudio: boolean; rawOutput: boolean }) => Promise<string>
   chooseDirectory: () => Promise<string | null>
   getPermissions: () => Promise<Permissions>
   openExternal: (url: string) => Promise<void>
